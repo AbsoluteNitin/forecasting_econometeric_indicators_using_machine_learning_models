@@ -1,324 +1,295 @@
-"# forecasting_econometeric_indicators_using_machine_learning_models" 
-# Interest Rate Forecasting using Rolling Random Forest and FRED Macroeconomic Data
+# Interest Rate Direction Forecasting using XGBoost
 
 ## Overview
 
-This project builds a **machine learning framework to forecast the direction of U.S. Federal Reserve interest rate changes** using macroeconomic and financial indicators.
+This project builds a **machine learning pipeline to forecast the
+direction of U.S. Federal Funds interest rate changes** using
+macroeconomic indicators from the **FRED (Federal Reserve Economic
+Data)** database.
 
-The model uses:
+The model predicts whether the Federal Reserve is likely to:
 
-* **Macroeconomic data from the FRED database**
-* **Feature engineering from economic indicators**
-* **Permutation-based feature selection**
-* **Rolling window Random Forest classification**
+-   **Cut** interest rates\
+-   **Hold** interest rates\
+-   **Hike** interest rates
 
-The goal is to classify future interest rate movements into three categories:
+The pipeline combines:
 
-| Class | Label | Meaning                               |
-| ----- | ----- | ------------------------------------- |
-| 0     | Cut   | Interest rate expected to decrease    |
-| 1     | Hold  | Interest rate expected to stay stable |
-| 2     | Hike  | Interest rate expected to increase    |
+-   Macroeconomic feature engineering
+-   Lag-based time series predictors
+-   Permutation feature importance
+-   Rolling-window forecasting
+-   Multi-class classification using **XGBoost**
 
-The model evaluates predictions across **multiple forecasting horizons**.
+------------------------------------------------------------------------
 
----
+# Dataset
 
-# Data Source
+Macroeconomic data is pulled from **FRED** using `pandas_datareader`.
 
-The dataset is obtained from the **FRED (Federal Reserve Economic Data) database** using `pandas_datareader`.
+### Variables Used
 
-Macroeconomic indicators used:
-
-| Variable | Description                 |
-| -------- | --------------------------- |
-| FEDFUNDS | Federal Funds Rate          |
-| PCEPILFE | Core PCE Inflation          |
-| UNRATE   | Unemployment Rate           |
-| INDPRO   | Industrial Production       |
-| DGS10    | 10-Year Treasury Yield      |
-| DGS2     | 2-Year Treasury Yield       |
-| T5YIFR   | 5Y5Y Inflation Expectations |
-| BAA      | BAA Corporate Bond Yield    |
-| AAA      | AAA Corporate Bond Yield    |
+  Variable   Description
+  ---------- -----------------------------
+  FEDFUNDS   Federal Funds Rate
+  PCEPILFE   Core PCE Inflation
+  UNRATE     Unemployment Rate
+  INDPRO     Industrial Production
+  DGS10      10-Year Treasury Yield
+  DGS2       2-Year Treasury Yield
+  T5YIFR     5y5y Inflation Expectations
+  BAA        BAA Corporate Bond Yield
+  AAA        AAA Corporate Bond Yield
 
 Time range:
 
-1995 – 2025
+1995 → 2025
 
----
+The dataset is converted to **monthly frequency**.
+
+------------------------------------------------------------------------
 
 # Feature Engineering
 
-Several macroeconomic indicators are transformed into predictive features.
+Several macroeconomic indicators are constructed to reflect the economic
+environment influencing monetary policy.
 
-### Inflation Indicators
+## Inflation Features
 
-* Year-over-year core inflation
-* Inflation momentum
+-   Core PCE YoY Inflation
+-   Inflation Momentum
 
-Example:
-
-```
-core_pce_yoy = 100 * core_pce.pct_change(12)
+``` python
+core_pce_yoy = 100 * pct_change(12)
 infl_momentum = core_pce_yoy - core_pce_yoy.shift(3)
 ```
 
----
+------------------------------------------------------------------------
 
-### Labor Market Indicators
+## Labor Market Features
 
-* Natural unemployment rate estimate
-* Unemployment gap
+-   Natural unemployment rate estimate
+-   Unemployment gap
 
-```
-u_star = rolling_mean(unemployment, 60 months)
-unemp_gap = unemployment - u_star
-```
-
----
-
-### Financial Conditions
-
-* Yield curve slope
-* Credit spread
-
-```
-yield_slope = 10yr_yield - 2yr_yield
-credit_spread = BAA - AAA
+``` python
+u_star = rolling mean (60 months)
+unemp_gap = unrate - u_star
 ```
 
----
+------------------------------------------------------------------------
 
-### Lag Features
+## Financial Market Features
 
-The model automatically generates lagged predictors such as:
+-   Yield curve slope
+-   Credit spread
 
+``` python
+yield_slope = gs10 - gs2
+credit_spread = baa - aaa
 ```
-rate_lag1
-rate_lag2
-infl_momentum_lag3
-yield_slope_lag2
-```
 
-These capture **temporal dynamics of macroeconomic variables**.
+------------------------------------------------------------------------
 
----
+## Policy Memory Feature
+
+Captures how long the Fed has held rates constant.
+
+    months_since_change
+
+------------------------------------------------------------------------
+
+# Lag Feature Creation
+
+Lagged versions of macro variables are created to allow the model to
+capture **historical economic dynamics**.
+
+Examples:
+
+    inflation_lag1
+    inflation_lag3
+    yield_slope_lag6
+
+These lag features are automatically detected in the pipeline.
+
+------------------------------------------------------------------------
 
 # Target Variable
 
-The model predicts **future interest rate direction**.
+The model predicts the **direction of future interest rate changes**.
 
-Future change is computed as:
+  Class   Label   Meaning
+  ------- ------- ----------------
+  0       Cut     Rate decreases
+  1       Hold    No change
+  2       Hike    Rate increases
 
+Target generation:
+
+``` python
+future_change = rate.shift(-horizon) - rate
 ```
-future_change = rate(t + horizon) - rate(t)
-```
 
-Classification rule:
+Decision rule:
 
-| Condition               | Class |
-| ----------------------- | ----- |
-| future_change < -0.001  | Cut   |
-| -0.001 ≤ change ≤ 0.001 | Hold  |
-| future_change > 0.001   | Hike  |
+-   0.001 → **Hike**
 
----
+-   \< -0.001 → **Cut**
+
+-   Otherwise → **Hold**
+
+------------------------------------------------------------------------
 
 # Feature Selection
 
-The project uses **Permutation Feature Importance** to identify the most informative predictors.
+Permutation importance is used to select the **Top K predictive
+features**.
 
-Procedure:
+Steps:
 
-1. Train Random Forest on the first training window
-2. Randomly shuffle feature values
-3. Measure drop in model performance
-4. Rank features by importance
-5. Select **Top-K most important predictors**
+1.  Train a **Random Forest model**
+2.  Compute **permutation importance**
+3.  Rank features by importance
+4.  Select **Top K features**
 
-Example output:
+This reduces overfitting and improves interpretability.
 
-```
-Top Features by Permutation Importance
-yield_slope_lag2
-infl_momentum_lag3
-unemp_gap_lag1
-rate_lag1
-```
-
----
-
-# Rolling Forecast Framework
-
-A **rolling window approach** simulates real-time forecasting.
-
-Training window:
-
-```
-120 months
-```
-
-Forecast process:
-
-```
-Train on past data
-↓
-Predict future horizon
-↓
-Move window forward
-↓
-Repeat
-```
-
-This avoids **look-ahead bias** and mimics real-world forecasting conditions.
-
----
+------------------------------------------------------------------------
 
 # Model
 
-The classification model used is **Random Forest**.
+The final classification model uses **XGBoost**.
 
-Parameters:
+Advantages:
 
-```
-n_estimators = 200
-max_depth = 6
-min_samples_leaf = 5
-random_state = 42
-```
+-   Handles nonlinear relationships
+-   Works well with tabular macroeconomic data
+-   Robust to correlated predictors
+-   Strong predictive performance
 
-These settings balance:
+------------------------------------------------------------------------
 
-* predictive accuracy
-* generalization
-* computational efficiency
+# Rolling Forecast Framework
 
----
+To simulate **real-world forecasting**, the model uses a rolling window
+approach.
 
-# Forecast Horizons
+Workflow:
 
-The model evaluates forecasts for multiple time horizons.
+1.  Train model on historical window (120 months)
+2.  Predict the next observation
+3.  Move the training window forward
+4.  Repeat until the dataset ends
 
-| Horizon  | Interpretation                |
-| -------- | ----------------------------- |
-| 1 Month  | Short-term policy prediction  |
-| 3 Months | Medium-term policy prediction |
-| 6 Months | Longer-term policy trend      |
+This produces **true out-of-sample predictions**.
 
----
+------------------------------------------------------------------------
 
 # Evaluation Metrics
 
-The model reports several classification metrics:
+Model performance is evaluated using:
 
-* Accuracy
-* Precision (Macro Average)
-* Recall (Macro Average)
-* F1 Score
-* Confusion Matrix
-* Classification Report
+-   Accuracy
+-   Precision
+-   Recall
+-   F1 Score
+-   Confusion Matrix
+-   Classification Report
 
-Example output:
+Class labels:
 
-```
-precision    recall  f1-score   support
+    Cut
+    Hold
+    Hike
 
-Cut       0.33      0.40      0.36        25
-Hold      0.44      0.21      0.29        19
-Hike      0.75      0.80      0.77        88
-```
+Visual diagnostics include:
 
----
+-   Confusion matrix heatmap
+-   Actual vs predicted scatter plots
 
-# Visualizations
-
-The notebook produces diagnostic plots:
-
-### Confusion Matrix
-
-Shows model prediction accuracy across classes.
-
-### Actual vs Predicted Scatter Plot
-
-Displays the alignment between predicted and actual policy decisions over time.
-
----
+------------------------------------------------------------------------
 
 # Project Workflow
 
-```
-Download FRED Data
-        ↓
-Feature Engineering
-        ↓
-Lag Feature Creation
-        ↓
-Target Construction
-        ↓
-Permutation Feature Selection
-        ↓
-Rolling Random Forest Model
-        ↓
-Evaluation Metrics
-        ↓
-Visualization
-```
+    Data Download (FRED)
+            │
+    Feature Engineering
+            │
+    Lag Feature Creation
+            │
+    Permutation Feature Selection
+            │
+    Rolling Window Training
+            │
+    XGBoost Classification
+            │
+    Evaluation & Diagnostics
 
----
+------------------------------------------------------------------------
 
-# Installation
+# Technologies Used
 
-Clone the repository:
+-   Python
+-   Pandas
+-   NumPy
+-   Matplotlib
+-   Scikit-learn
+-   XGBoost
+-   pandas-datareader
 
-```
-git clone https://github.com/yourusername/fed-rate-forecasting.git
-cd fed-rate-forecasting
-```
+------------------------------------------------------------------------
 
-Install required libraries:
-
-```
-pip install pandas numpy matplotlib scikit-learn pandas_datareader
-```
-
----
-
-# Running the Model
+# Example Usage
 
 Run the forecasting pipeline:
 
-```
+``` python
 TOP_K = 4
 
-for h in [1,3,6]:
+for h in [1, 3, 6]:
     detailed_diagnostics_rf(df, h, TOP_K)
 ```
 
-This will output:
+Forecast horizons:
 
-* selected features
-* classification metrics
-* confusion matrix
-* prediction plots
+  Horizon   Meaning
+  --------- ---------------
+  1         1‑month ahead
+  3         3‑month ahead
+  6         6‑month ahead
 
----
+------------------------------------------------------------------------
+
+# Research Motivation
+
+Central bank policy decisions depend on:
+
+-   Inflation dynamics
+-   Labor market conditions
+-   Financial market signals
+
+This project explores whether **machine learning models can capture
+these relationships and predict policy actions**.
+
+------------------------------------------------------------------------
 
 # Future Improvements
 
-Potential extensions include:
+Possible extensions:
 
-* XGBoost / LightGBM models
-* Hyperparameter optimization
-* Additional macroeconomic indicators
-* Time-series cross-validation
-* Probabilistic policy forecasts
+-   Add more macroeconomic indicators
+-   Use SHAP values for explainability
+-   Compare models:
+    -   Random Forest
+    -   XGBoost
+    -   LightGBM
+    -   Logistic Regression
+-   Hyperparameter tuning
+-   Regime-switching models
 
----
+------------------------------------------------------------------------
 
 # Author
 
-Machine Learning Project focused on **Macroeconomic Forecasting and Monetary Policy Prediction**.
+**Nitin Yadav**
 
-This repository demonstrates how machine learning can be applied to **financial time-series and macroeconomic policy analysis**.
-
+Machine Learning • Data Science • Macroeconomic Forecasting
